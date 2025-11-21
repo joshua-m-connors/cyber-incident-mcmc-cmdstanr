@@ -202,12 +202,12 @@ Rscript cyber_incident_cmdstanr.R   --dataset enterprise-attack.json   --strengt
 
 ## 8. License
 
-Licensed under Apache 2.0.
+FAIR–MITRE ATT&CK Quantitative Cyber Risk Framework
 
----
+Copyright 2025 Joshua M. Connors
 
-## 9. Contact
+Licensed under the Apache License, Version 2.0.
 
-For questions, enhancements, or contributions, open an issue at:  
-https://github.com/joshua-m-connors/cyber-incident-mcmc-cmdstanr
+This software incorporates public data from the MITRE ATT&CK® framework.
+
 

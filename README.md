@@ -3,6 +3,8 @@
 
 This repository provides an R-based implementation of the FAIR–MITRE ATT&CK quantitative cyber‑risk model. It integrates MITRE ATT&CK defensive coverage, stochastic attacker progression, Bayesian inference, and FAIR financial loss modeling into a single reproducible workflow using **R**, **CmdStanR**, and **Monte Carlo simulation**.
 
+This is a R implementation of the model in this repository: https://github.com/joshua-m-connors/cyber-incident-mcmc-pymc
+
 ---
 
 ## 1. Overview

@@ -49,7 +49,7 @@ CI_MAX_FREQ <- 24          # e.g., twice per month
 
 # Threat capability: multiplicative drift applied to per-stage success probs.
 THREAT_CAPABILITY_STOCHASTIC <- TRUE
-THREAT_CAPABILITY_RANGE <- c(0.4, 0.9)   # [low, high] lift applied
+THREAT_CAPABILITY_RANGE <- c(0.4, 0.95)   # [low, high] lift applied
 
 # Impact reduction multipliers when gating conditions pass (from dashboard):
 # - Backup reduces Productivity + Response/Containment
@@ -71,16 +71,14 @@ PLOT_IN_MILLIONS <- TRUE  # TRUE -> show $M, FALSE -> raw dollars
 # =================================
 # Attacker adaptability across retries at a stage.
 ADAPTABILITY_STOCHASTIC <- TRUE
-ADAPTABILITY_RANGE <- c(0.3, 0.8)   # adaptive gain range
+ADAPTABILITY_RANGE <- c(0.3, 0.9)   # adaptive gain range
 ADAPTABILITY_MODE <- "linear"     # "logistic" or "linear"
 ADAPTABILITY_EFFECT_SCALE <- 1.0    # if MODE == "linear"
 
 # Detection & fallback dynamics.
 MAX_RETRIES_PER_STAGE <- 3
-DETECT_BASE <- 0.05
-DETECT_INC_MIN <- 0.01        # per-retry detection increment (min)
-DETECT_INC_MAX <- 0.03        # per-retry detection increment (max)
-DETECT_INC_PER_RETRY <- 0.03  # legacy (unused when MIN/MAX present)
+DETECT_BASE <- 0.01
+DETECT_INC_PER_RETRY <- 0.03
 FALLBACK_PROB <- 0.25
 MAX_FALLBACKS_PER_CHAIN <- 3
 
@@ -249,68 +247,72 @@ model {
 # Attacker progression with retries/detection/fallback
 # ----------------------------------------------------------------------------
 simulate_attacker_path <- function(success_probs){
-  #Simulate stage-by-stage attacker progression with retries, detection checks,
-  #adaptability adjustments, and fallbacks.
-  i <- 1L
+  # --------------------------------------------------------------------------
+  # Stagewise attacker progression with retries, detection checks, and fallback.
+  #
+  # IMPORTANT MODEL SEMANTICS (as specified):
+  #   - Adaptability does NOT increase probability of success.
+  #     It ONLY gates whether another retry can occur (up to MAX_RETRIES_PER_STAGE).
+  #   - Detection is defender-side and increases with persistence (failed retries).
+  #   - Per-stage success probabilities are provided by the caller (already include
+  #     whatever upstream effects are intended, such as control-strength priors).
+  #
+  # This function is intentionally aligned to the Python reference implementation
+  # (_simulate_attacker_path) for behavioral parity.
+  # --------------------------------------------------------------------------
+  if (length(success_probs) == 0L) return(FALSE)
+
   n_stages <- length(success_probs)
+  i <- 1L
   fallback_count <- 0L
 
-  if (n_stages == 0L) return(FALSE)
-
   while (i >= 1L && i <= n_stages) {
-    p_current <- as.numeric(success_probs[i])
-    p_current <- max(0.0, min(1.0, p_current))
+    p_nominal <- min(1.0, max(0.0, as.numeric(success_probs[i])))
     detect_prob <- DETECT_BASE
 
-    stage_succeeded <- FALSE
+    stage_cleared <- FALSE
+    retry <- 0L
 
-    for (rtry in seq_len(MAX_RETRIES_PER_STAGE)) {
+    while (retry < MAX_RETRIES_PER_STAGE && !stage_cleared) {
+      retry <- retry + 1L
 
-      # Try stage
-      if (runif(1) < p_current) {
-        stage_succeeded <- TRUE
-        i <- i + 1L
+      # Attempt the stage (success probability does NOT change across retries)
+      if (runif(1) < p_nominal) {
+        stage_cleared <- TRUE
         break
       }
 
-      # Failure: increase detection probability by a sampled increment
-      delta <- runif(1, DETECT_INC_MIN, DETECT_INC_MAX)
-      detect_prob <- min(1.0, detect_prob + delta)
+      # Failed attempt → detection pressure increases
+      detect_prob <- min(1.0, detect_prob + DETECT_INC_PER_RETRY)
 
-      # Check if detected
+      # If detected, the chain fails immediately
       if (runif(1) < detect_prob) return(FALSE)
 
-      # Adaptability adjustment (learning from failure)
+      # Adaptability gates whether the attacker persists to another retry
       if (ADAPTABILITY_STOCHASTIC) {
-        adapt_factor <- runif(1, ADAPTABILITY_RANGE[1], ADAPTABILITY_RANGE[2])
+        adapt <- runif(1, ADAPTABILITY_RANGE[1], ADAPTABILITY_RANGE[2])
       } else {
-        adapt_factor <- mean(ADAPTABILITY_RANGE)
+        adapt <- mean(ADAPTABILITY_RANGE)
       }
-
-      if (ADAPTABILITY_MODE == "logistic") {
-        change <- adapt_factor * (1.0 - p_current) * p_current
-      } else {
-        change <- (adapt_factor * ADAPTABILITY_EFFECT_SCALE) * (1.0 - p_current)
-      }
-
-      p_current <- max(0.0, min(1.0, p_current + change))
+      if (runif(1) > adapt) break
     }
 
-    if (stage_succeeded) {
+    if (stage_cleared) {
+      i <- i + 1L
       next
-    } else {
-      # Retries exhausted: fallback attempt
-      if (runif(1) < FALLBACK_PROB && fallback_count < MAX_FALLBACKS_PER_CHAIN) {
-        fallback_count <- fallback_count + 1L
-        i <- max(1L, i - 1L)
-        next
-      } else {
-        return(FALSE)
-      }
     }
+
+    # Stage not cleared (either retries exhausted or attacker stops persisting) → maybe fallback
+    if (runif(1) < FALLBACK_PROB && fallback_count < MAX_FALLBACKS_PER_CHAIN) {
+      fallback_count <- fallback_count + 1L
+      i <- max(1L, i - 1L)
+      next
+    }
+
+    return(FALSE)
   }
 
-  return(i > n_stages)
+  i > n_stages
 }
 
 # ----------------------------------------------------------------------------
@@ -357,14 +359,20 @@ simulate_posterior_predictive <- function(draws_lambda, succ_mat, tactics, impac
       stage_success_probs <- as.numeric(succ_mat[i, ])
       if (length(stage_success_probs) == 0) next
       stage_success_probs <- pmin(pmax(stage_success_probs, 0.0), 1.0)
-      # Apply Threat Capability exactly as the Python reference: scale stage susceptibility by tc
-      stage_success_probs <- pmin(pmax(tc * stage_success_probs, 0.0), 1.0)
+      # Apply Threat Capability to stage success probabilities (match Python logic)
+      # tc in [0,1] lifts probabilities toward 1: p := p + tc*(1-p)
+      stage_success_probs <- pmin(pmax(stage_success_probs + tc * (1.0 - stage_success_probs), 0.0), 1.0)
       
       if (simulate_attacker_path(stage_success_probs)) {
         prod <- rlnorm(1, meanlog = cat_mu[1], sdlog = cat_sigma[1])
         resp <- rlnorm(1, meanlog = cat_mu[2], sdlog = cat_sigma[2])
         reg  <- rlnorm(1, meanlog = cat_mu[3], sdlog = cat_sigma[3])
         rep  <- rlnorm(1, meanlog = cat_mu[4], sdlog = cat_sigma[4])
+        # Cap lognormal draws at exp(mu + 3.09*sigma) to match Python
+        prod <- min(prod, exp(cat_mu[1] + 3.09 * cat_sigma[1]))
+        resp <- min(resp, exp(cat_mu[2] + 3.09 * cat_sigma[2]))
+        reg  <- min(reg,  exp(cat_mu[3] + 3.09 * cat_sigma[3]))
+        rep  <- min(rep,  exp(cat_mu[4] + 3.09 * cat_sigma[4]))
         # occasional heavy tails
         if (runif(1) < 0.025) reg <- max(reg, rbounded_pareto(1, xm = pareto_defaults$RegulatoryLegal$xm, alpha = pareto_defaults$RegulatoryLegal$alpha))
         if (runif(1) < 0.015) rep <- max(rep, rbounded_pareto(1, xm = pareto_defaults$ReputationCompetitive$xm, alpha = pareto_defaults$ReputationCompetitive$alpha))
@@ -379,8 +387,6 @@ simulate_posterior_predictive <- function(draws_lambda, succ_mat, tactics, impac
           scale <- max(0.0, 1.0 - encrypt_s * ENCRYPT_IMPACT_MULT)
           reg <- reg*scale; rep <- rep*scale
         }
-                if (backup_s > 0)  { scale <- max(0.0, 1.0 - backup_s * BACKUP_IMPACT_MULT); prod <- prod*scale; resp <- resp*scale }
-        if (encrypt_s > 0) { scale <- max(0.0, 1.0 - encrypt_s * ENCRYPT_IMPACT_MULT); reg <- reg*scale; rep <- rep*scale }
         prod_acc <- prod_acc + prod; resp_acc <- resp_acc + resp; reg_acc <- reg_acc + reg; rep_acc <- rep_acc + rep
         total_loss <- total_loss + (prod + resp + reg + rep)
         succ_count <- succ_count + 1L

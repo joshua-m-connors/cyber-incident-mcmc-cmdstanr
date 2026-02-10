@@ -55,7 +55,7 @@ Controls are mapped to techniques, then aggregated to tactic-level effectiveness
 The R implementation uses **strict, bounded logic**:
 
 - **Adaptability does NOT increase success probability**
-- Adaptability **governs persistence** (whether retries are allowed after failure)
+- Adaptability **only governs persistence** (whether retries are allowed after failure)
 - Retries are capped by `MAX_RETRIES_PER_STAGE`
 - **Detection probability increases with repeated attempts**
 
@@ -103,12 +103,13 @@ If no observed data is provided, the model runs fully prior-driven.
 
 ```
 .
-├── cyber_incident_cmdstanr.R        # Main model runner (cmdstanr)
-├── build_mitigation_influence_template.R
-├── build_technique_relevance_template.R
+├── cyber_incident_cmdstanr.R              # Main model runner (cmdstanr)
+├── build_mitigation_influence_template.R # Builds mitigation→technique influence matrix
+├── build_technique_relevance_template.R  # Builds technique relevance weights
+├── mitre_control_strength_dashboard.R    # Visualization and diagnostics dashboard
 ├── mitigation_control_strengths.csv
 ├── technique_relevance.csv
-├── mitre_control_strength_dashboard.R
+├── mitigation_influence_template.csv
 ├── README.md
 ```
 
@@ -150,7 +151,79 @@ wget https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterp
 ```
 ---
 
-## 8. Input Files
+## 8. Supporting Scripts (How and When to Use Them)
+
+### 8.1 `build_mitigation_influence_template.R`
+
+**Purpose**  
+Generates a template CSV that defines how individual MITRE ATT&CK mitigations influence specific techniques.
+
+**When to use it**
+- When initializing the model for a new environment
+- When adding new mitigations
+- When refining SME judgments about control impact
+
+**What it produces**
+- `mitigation_influence_template.csv`
+
+This file assigns **relative influence weights** that are later used to roll mitigation strength up from technique to tactic.
+
+**How to run**
+```bash
+Rscript build_mitigation_influence_template.R
+```
+
+You are expected to review and edit the generated CSV before running the main model.
+
+---
+
+### 8.2 `build_technique_relevance_template.R`
+
+**Purpose**  
+Builds a template for weighting how relevant each ATT&CK technique is to the modeled threat context.
+
+**When to use it**
+- To scope the model to specific threat actors
+- To reflect industry or environment-specific attack patterns
+- To incorporate threat intelligence into the model
+
+**What it produces**
+- `technique_relevance.csv`
+
+Higher weights indicate techniques that are more likely or more important in the modeled scenario.
+
+**How to run**
+```bash
+Rscript build_technique_relevance_template.R
+```
+
+---
+
+### 8.3 `mitre_control_strength_dashboard.R`
+
+**Purpose**  
+Provides a visual and diagnostic view of how control strengths and relevance weights aggregate from techniques to tactics.
+
+**When to use it**
+- To validate that inputs behave as expected
+- To debug unexpected model results
+- To support analyst review and stakeholder explanation
+
+**What it consumes**
+- `mitigation_control_strengths.csv`
+- `mitigation_influence_template.csv`
+- `technique_relevance.csv`
+
+**How to run**
+```bash
+Rscript mitre_control_strength_dashboard.R
+```
+
+The dashboard helps ensure that tactic-level effectiveness ranges are reasonable before running simulations.
+
+---
+
+## 9. Input Files
 
 ### `mitigation_control_strengths.csv`
 
@@ -167,7 +240,7 @@ Used to roll technique controls up to tactics.
 
 ---
 
-## 9. Running the Model
+## 10. Running the Model
 
 Basic run:
 

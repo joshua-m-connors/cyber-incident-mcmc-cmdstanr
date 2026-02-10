@@ -4,11 +4,94 @@ This repository contains an end to end, FAIR aligned cyber risk modeling workflo
 
 The repo also includes three supporting scripts used to generate or validate the CSV inputs required by the main model.
 
-## What you get
+### What this model does
 
-- A reproducible way to estimate annualized loss distributions (AAL, percentiles, probability of zero loss years)
-- A transparent input pipeline from MITRE ATT&CK data and mitigation strength assumptions to tactic level effectiveness ranges
-- CLI driven scripts so the workflow can be automated, versioned, and re run consistently
+At a high level, the model:
+
+1. Represents **attack attempts per year** as an uncertain frequency distribution
+2. Simulates attacker progression through a **MITRE ATT&CK tactic chain**
+3. Applies **control strength and threat capability** to determine stage success
+4. Models **detection and retry behavior** explicitly
+5. Simulates **financial loss** for successful incidents using bounded severity distributions
+6. Produces **annualized loss distributions (AAL, percentiles, exceedance curves)**
+
+All outputs are **distributions**, not single values.
+
+### What this model is not
+
+- It is **not** a deterministic forecast
+- It is **not** a risk scoring system
+- It does **not** assume repeated attempts guarantee success
+
+---
+
+### Core Modeling Principles
+
+### FAIR alignment
+
+The model follows FAIR principles:
+
+- Frequency and magnitude are modeled separately
+- Loss is expressed in **financial terms**
+- Uncertainty is preserved throughout the analysis
+
+### MITRE ATT&CK integration
+
+MITRE ATT&CK provides:
+
+- The **attack progression structure** (tactics)
+- Technique-level mappings for controls and relevance
+
+Controls are mapped to techniques, then aggregated to tactic-level effectiveness ranges.
+
+---
+
+### Detection and Adaptability (Important)
+
+The R implementation uses **strict, bounded logic**:
+
+- **Adaptability does NOT increase success probability**
+- Adaptability **only governs persistence** (whether retries are allowed after failure)
+- Retries are capped by `MAX_RETRIES_PER_STAGE`
+- **Detection probability increases with repeated attempts**
+
+This prevents the common modeling error where retries converge to certainty.
+
+---
+
+### Bayesian Structure
+
+### Why Bayesian inference
+
+Cyber risk is under-observed. We rarely have complete, clean data.
+
+Bayesian inference allows us to:
+
+- Encode uncertainty as distributions
+- Combine priors with limited evidence
+- Produce posterior distributions that support comparison
+
+### Posterior interpretation
+
+Each posterior draw represents **one internally consistent version of reality**, including:
+
+- Annual attempt rate
+n- Per-tactic success probabilities
+- Loss severity behavior
+
+Posterior predictive simulation explores a **space of plausible outcomes**, not a single future.
+
+---
+
+### Observed Data Conditioning (Optional)
+
+The model can optionally be conditioned on **observed breach counts**.
+
+- Conditioning applies **only to frequency**
+- Implemented as a Poisson likelihood on observed incidents over observed years
+- Per-tactic success probabilities remain uncertain unless stage-level data exists
+
+If no observed data is provided, the model runs fully prior-driven.
 
 ## Core scripts
 
@@ -23,6 +106,22 @@ The repo also includes three supporting scripts used to generate or validate the
 
 4. `mitre_control_strength_dashboard.R`  
    Produces a diagnostic dashboard to validate how your control strength, influence weights, and relevance weights roll up from techniques to tactics.
+
+---
+
+## Repository Structure
+
+```
+.
+├── cyber_incident_cmdstanr.R              # Main model runner (cmdstanr)
+├── build_mitigation_influence_template.R # Builds mitigation→technique influence matrix
+├── build_technique_relevance_template.R  # Builds technique relevance weights
+├── mitre_control_strength_dashboard.R    # Visualization and diagnostics dashboard
+├── mitigation_control_strengths.csv
+├── technique_relevance.csv
+├── mitigation_influence_template.csv
+├── README.md
+```
 
 ---
 

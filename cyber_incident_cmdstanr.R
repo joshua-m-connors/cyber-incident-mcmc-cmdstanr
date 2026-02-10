@@ -82,6 +82,15 @@ DETECT_INC_PER_RETRY <- 0.03
 FALLBACK_PROB <- 0.25
 MAX_FALLBACKS_PER_CHAIN <- 3
 
+# ==========================================
+# Optional observed breach conditioning (λ)
+# ==========================================
+# When provided, condition λ via:
+#   observed_total_incidents ~ Poisson(lambda_rate * observed_years)
+# Defaults are NA (no conditioning)
+OBSERVED_TOTAL_INCIDENTS <- NA_integer_
+OBSERVED_YEARS <- NA_real_
+
 # Loss category parameterization for
 # heavy-tail bumps (bounded Pareto) for Regulatory & Reputation.
 pareto_defaults <- list(RegulatoryLegal=list(xm=50000, alpha=3.5),
@@ -153,7 +162,12 @@ get_strengths <- function(dataset="enterprise-attack.json",
   options(MITRE_DASH_IMPORT = TRUE)
   on.exit(options(MITRE_DASH_IMPORT = oldflag), add = TRUE)
   
-  source("mitre_control_strength_dashboard.R", local = FALSE)
+  # Source dashboard relative to this script's location (avoids working-dir issues)
+  cmd_args <- commandArgs(trailingOnly = FALSE)
+  file_arg <- cmd_args[grep("^--file=", cmd_args)]
+  script_path <- if (length(file_arg) > 0) sub("^--file=", "", file_arg[1]) else ""
+  script_dir <- if (nzchar(script_path)) dirname(normalizePath(script_path)) else getwd()
+  source(file.path(script_dir, "mitre_control_strength_dashboard.R"), local = FALSE)
   
   # Retrieve filtered results directly from the global environment
   res <- .GlobalEnv$get_mitre_tactic_strengths(
@@ -232,6 +246,11 @@ data {
   vector<lower=0>[K] beta;
   real mu_lambda;
   real<lower=0> sigma_lambda;
+
+  // Optional conditioning on observed breaches (λ)
+  int<lower=0,upper=1> use_obs;
+  int<lower=0> observed_total_incidents;
+  real<lower=0> observed_years;
 }
 parameters {
   real<lower=0> lambda_rate;
@@ -240,6 +259,10 @@ parameters {
 model {
   lambda_rate ~ lognormal(mu_lambda, sigma_lambda);
   success_probs ~ beta(alpha, beta);
+
+  if (use_obs == 1) {
+    observed_total_incidents ~ poisson(lambda_rate * observed_years);
+  }
 }
 "
 
@@ -511,6 +534,8 @@ main <- function(){
     make_option(c("-N","--no-plot"), action="store_true", default=FALSE, help="Skip ggplot outputs"),
     make_option(c("-y","--summary-only"), action="store_true", default=FALSE, help="Write only summary CSV (skip per-draw CSV)"),
     make_option(c("-o","--output-dir"), type="character", default=NULL, help="Override output directory"),
+    make_option(c("--observed-incidents"), type="integer", default=OBSERVED_TOTAL_INCIDENTS, help="Observed successful breaches (count) over observed-years [default %default]"),
+    make_option(c("--observed-years"), type="double", default=OBSERVED_YEARS, help="Number of years corresponding to observed-incidents [default %default]"),
     make_option(c("-q","--quiet"), action="store_true", default=FALSE, help="Suppress console messages")
   )
   opt <- parse_args(OptionParser(option_list = option_list))
@@ -537,12 +562,25 @@ main <- function(){
   mu_lambda <- log(sqrt(CI_MIN_FREQ * CI_MAX_FREQ))
   sigma_lambda <- (log(CI_MAX_FREQ) - log(CI_MIN_FREQ)) / (2.0 * 1.645)
 
+  # ------------------------------------------
+  # Optional conditioning on observed breaches
+  # ------------------------------------------
+  OBSERVED_TOTAL_INCIDENTS <- opt$`observed-incidents`
+  OBSERVED_YEARS <- opt$`observed-years`
+
+  use_obs <- (!is.na(OBSERVED_TOTAL_INCIDENTS) && !is.na(OBSERVED_YEARS))
+  obs_inc <- if (use_obs) as.integer(OBSERVED_TOTAL_INCIDENTS) else 0L
+  obs_yrs <- if (use_obs) as.numeric(OBSERVED_YEARS) else 0.0
+
   data_list <- list(
     K = K,
     alpha = as.vector(pri$alpha),
     beta  = as.vector(pri$beta),
     mu_lambda = mu_lambda,
-    sigma_lambda = sigma_lambda
+    sigma_lambda = sigma_lambda,
+    use_obs = if (use_obs) 1L else 0L,
+    observed_total_incidents = obs_inc,
+    observed_years = obs_yrs
   )
   
   # ----------------------------------------------------------------------------

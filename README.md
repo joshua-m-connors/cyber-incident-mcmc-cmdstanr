@@ -1,128 +1,39 @@
-# FAIR–MITRE ATT&CK Quantitative Risk Model (R / cmdstanr)
+# FAIR + MITRE ATT&CK Quantitative Cyber Risk Model (R, cmdstanr)
 
-This repository implements a **FAIR-aligned, MITRE ATT&CK–informed quantitative cyber risk model** using Bayesian inference and Monte Carlo simulation. The primary goal is to estimate **annualized loss distributions** while preserving uncertainty, attacker behavior, and control effectiveness in a way that supports **decision-making and scenario comparison**, not point prediction.
+This repository contains an end to end, FAIR aligned cyber risk modeling workflow that uses MITRE ATT&CK data to structure attacker progression and control coverage. The main entrypoint is an R script that runs a Bayesian model in **cmdstanr** and then performs posterior predictive simulation to produce **annualized loss distributions**.
 
-The core execution path is implemented in **R using cmdstanr**, with supporting scripts for building control strength inputs, technique relevance mappings, and dashboards.
+The repo also includes three supporting scripts used to generate or validate the CSV inputs required by the main model.
 
----
+## What you get
 
-## 1. Conceptual Overview
+- A reproducible way to estimate annualized loss distributions (AAL, percentiles, probability of zero loss years)
+- A transparent input pipeline from MITRE ATT&CK data and mitigation strength assumptions to tactic level effectiveness ranges
+- CLI driven scripts so the workflow can be automated, versioned, and re run consistently
 
-### What this model does
+## Core scripts
 
-At a high level, the model:
+1. `cyber_incident_cmdstanr.R`  
+   Main model runner. Reads ATT&CK data and control strength inputs, fits the model with cmdstanr, runs posterior predictive simulation, and writes outputs.
 
-1. Represents **attack attempts per year** as an uncertain frequency distribution
-2. Simulates attacker progression through a **MITRE ATT&CK tactic chain**
-3. Applies **control strength and threat capability** to determine stage success
-4. Models **detection and retry behavior** explicitly
-5. Simulates **financial loss** for successful incidents using bounded severity distributions
-6. Produces **annualized loss distributions (AAL, percentiles, exceedance curves)**
+2. `build_mitigation_influence_template.R`  
+   Generates `mitigation_influence_template.csv`, a template you edit to encode mitigation to technique influence weights.
 
-All outputs are **distributions**, not single values.
+3. `build_technique_relevance_template.R`  
+   Generates `technique_relevance.csv`, a template that can optionally be auto marked using ATT&CK procedures (Groups, Software) or Campaigns from the ATT&CK JSON.
 
-### What this model is not
-
-- It is **not** a deterministic forecast
-- It is **not** a risk scoring system
-- It does **not** assume repeated attempts guarantee success
+4. `mitre_control_strength_dashboard.R`  
+   Produces a diagnostic dashboard to validate how your control strength, influence weights, and relevance weights roll up from techniques to tactics.
 
 ---
 
-## 2. Core Modeling Principles
+## Prerequisites
 
-### FAIR alignment
+### R and CmdStan
 
-The model follows FAIR principles:
+- R 4.2 or newer
+- CmdStan installed via cmdstanr
 
-- Frequency and magnitude are modeled separately
-- Loss is expressed in **financial terms**
-- Uncertainty is preserved throughout the analysis
-
-### MITRE ATT&CK integration
-
-MITRE ATT&CK provides:
-
-- The **attack progression structure** (tactics)
-- Technique-level mappings for controls and relevance
-
-Controls are mapped to techniques, then aggregated to tactic-level effectiveness ranges.
-
----
-
-## 3. Detection and Adaptability (Important)
-
-The R implementation uses **strict, bounded logic**:
-
-- **Adaptability does NOT increase success probability**
-- Adaptability **only governs persistence** (whether retries are allowed after failure)
-- Retries are capped by `MAX_RETRIES_PER_STAGE`
-- **Detection probability increases with repeated attempts**
-
-This prevents the common modeling error where retries converge to certainty.
-
----
-
-## 4. Bayesian Structure
-
-### Why Bayesian inference
-
-Cyber risk is under-observed. We rarely have complete, clean data.
-
-Bayesian inference allows us to:
-
-- Encode uncertainty as distributions
-- Combine priors with limited evidence
-- Produce posterior distributions that support comparison
-
-### Posterior interpretation
-
-Each posterior draw represents **one internally consistent version of reality**, including:
-
-- Annual attempt rate
-n- Per-tactic success probabilities
-- Loss severity behavior
-
-Posterior predictive simulation explores a **space of plausible outcomes**, not a single future.
-
----
-
-## 5. Observed Data Conditioning (Optional)
-
-The model can optionally be conditioned on **observed breach counts**.
-
-- Conditioning applies **only to frequency**
-- Implemented as a Poisson likelihood on observed incidents over observed years
-- Per-tactic success probabilities remain uncertain unless stage-level data exists
-
-If no observed data is provided, the model runs fully prior-driven.
-
----
-
-## 6. Repository Structure
-
-```
-.
-├── cyber_incident_cmdstanr.R              # Main model runner (cmdstanr)
-├── build_mitigation_influence_template.R # Builds mitigation→technique influence matrix
-├── build_technique_relevance_template.R  # Builds technique relevance weights
-├── mitre_control_strength_dashboard.R    # Visualization and diagnostics dashboard
-├── mitigation_control_strengths.csv
-├── technique_relevance.csv
-├── mitigation_influence_template.csv
-├── README.md
-```
-
----
-
-## 7. Prerequisites
-
-### System requirements
-
-- R >= 4.2
-- CmdStan >= 2.33
-
-### R packages
+Install required R packages:
 
 ```r
 install.packages(c(
@@ -132,11 +43,12 @@ install.packages(c(
   "dplyr",
   "tidyr",
   "optparse",
-  "jsonlite"
+  "jsonlite",
+  "readr"
 ))
 ```
 
-Install CmdStan (once):
+Install CmdStan once:
 
 ```r
 cmdstanr::install_cmdstan()
@@ -149,164 +61,170 @@ Download MITRE ATT&CK Enterprise JSON:
 ```bash
 wget https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json
 ```
----
 
-## 8. Supporting Scripts (How and When to Use Them)
-
-### 8.1 `build_mitigation_influence_template.R`
-
-**Purpose**  
-Generates a template CSV that defines how individual MITRE ATT&CK mitigations influence specific techniques.
-
-**When to use it**
-- When initializing the model for a new environment
-- When adding new mitigations
-- When refining SME judgments about control impact
-
-**What it produces**
-- `mitigation_influence_template.csv`
-
-This file assigns **relative influence weights** that are later used to roll mitigation strength up from technique to tactic.
-
-**How to run**
-```bash
-Rscript build_mitigation_influence_template.R
-```
-
-You are expected to review and edit the generated CSV before running the main model.
+MITRE provides ATT&CK STIX data and tooling documentation here. citeturn0search0turn0search7
 
 ---
 
-### 8.2 `build_technique_relevance_template.R`
+## Inputs and outputs
 
-**Purpose**  
-Builds a template for weighting how relevant each ATT&CK technique is to the modeled threat context.
+### Required input CSVs
 
-**When to use it**
-- To scope the model to specific threat actors
-- To reflect industry or environment-specific attack patterns
-- To incorporate threat intelligence into the model
+- `mitigation_control_strengths.csv`  
+  Your mitigation strength assumptions. Values are typically on [0, 1], where higher indicates stronger controls.
 
-**What it produces**
-- `technique_relevance.csv`
+- `mitigation_influence_template.csv`  
+  Mitigation to technique influence weights. Generated by `build_mitigation_influence_template.R`, then edited by you.
 
-Higher weights indicate techniques that are more likely or more important in the modeled scenario.
+- `technique_relevance.csv`  
+  Technique relevance weights for your scenario. Generated by `build_technique_relevance_template.R`, then optionally edited by you.
 
-**How to run**
-```bash
-Rscript build_technique_relevance_template.R
-```
+### Output directory convention
+
+All scripts support `--output-dir` to override the default output directory. If not provided, scripts typically create `output_YYYY-MM-DD` in the working directory.
 
 ---
 
-### 8.3 `mitre_control_strength_dashboard.R`
+## Recommended workflow
 
-**Purpose**  
-Provides a visual and diagnostic view of how control strengths and relevance weights aggregate from techniques to tactics.
-
-**When to use it**
-- To validate that inputs behave as expected
-- To debug unexpected model results
-- To support analyst review and stakeholder explanation
-
-**What it consumes**
-- `mitigation_control_strengths.csv`
-- `mitigation_influence_template.csv`
-- `technique_relevance.csv`
-
-**How to run**
-```bash
-Rscript mitre_control_strength_dashboard.R
-```
-
-The dashboard helps ensure that tactic-level effectiveness ranges are reasonable before running simulations.
-
----
-
-## 9. Input Files
-
-### `mitigation_control_strengths.csv`
-
-Defines **min/max control effectiveness** per mitigation.
-
-- Values are on [0, 1]
-- Higher means stronger controls
-
-### `technique_relevance.csv`
-
-Weights how relevant each technique is for the modeled threat context.
-
-Used to roll technique controls up to tactics.
-
----
-
-## 10. Running the Model
-
-Basic run:
+1) Generate influence template
 
 ```bash
-Rscript cyber_incident_cmdstanr.R \
-  --dataset enterprise-attack.json \
-  --strengths mitigation_control_strengths.csv \
-  --technique-relevance technique_relevance.csv
+Rscript build_mitigation_influence_template.R --dataset enterprise-attack.json
 ```
 
-With observed data conditioning:
+Edit the resulting `mitigation_influence_template.csv` to reflect your environment.
+
+2) Generate technique relevance template
+
+Minimal template:
 
 ```bash
-Rscript cyber_incident_cmdstanr.R \
-  --observed-incidents 2 \
-  --observed-years 5
+Rscript build_technique_relevance_template.R --enterprise-json enterprise-attack.json
 ```
 
-Key CLI options:
+Auto mark relevance using procedures or campaigns (details below):
 
-- `--samples` Number of posterior samples
-- `--chains` Number of MCMC chains
-- `--seed` Random seed
-- `--summary-only` Skip plots
+```bash
+Rscript build_technique_relevance_template.R --procedure "APT29" --procedure "Mimikatz" --campaign C0017
+```
 
----
+3) Validate rollups with the dashboard
 
-## 10. Outputs
+```bash
+Rscript mitre_control_strength_dashboard.R --dataset enterprise-attack.json --strengths mitigation_control_strengths.csv --use-relevance
+```
 
-The model produces:
+4) Run the main model
 
-- Annualized loss distributions
-- Mean and median AAL
-- Percentiles and credible intervals
-- Probability of zero-loss years
-- Exceedance curves
-
-Outputs are written to a timestamped directory.
+```bash
+Rscript cyber_incident_cmdstanr.R --dataset enterprise-attack.json --strengths mitigation_control_strengths.csv
+```
 
 ---
 
-## 11. Interpreting Results
+## CLI reference
 
-Focus on:
+All four scripts use `optparse` and accept CLI flags. Below are the flags implemented in the versions of the scripts included in this repository.
 
-- **Comparison**, not precision
-- Changes in percentiles and exceedance probabilities
-- Directional sensitivity to control improvements
+### 1) `cyber_incident_cmdstanr.R` flags
 
-The most defensible statements are comparative:
+| Flag | Default | Meaning |
+|---|---:|---|
+| `-d`, `--dataset` | `enterprise-attack.json` | Path to ATT&CK Enterprise JSON bundle |
+| `-s`, `--strengths` | `mitigation_control_strengths.csv` | Path to mitigation strengths CSV |
+| `-n`, `--samples` | `4000` | Posterior draws per chain |
+| `-c`, `--chains` | `4` | Number of MCMC chains |
+| `-t`, `--tune` | `1000` | Warmup iterations |
+| `-S`, `--seed` | `42` | Random seed |
+| `-N`, `--no-plot` | off | Skip ggplot outputs |
+| `-y`, `--summary-only` | off | Write only summary CSV (skip per draw CSV) |
+| `-o`, `--output-dir` | auto | Override output directory |
+| `-q`, `--quiet` | off | Suppress console messages |
 
-> "Improving detection reduces the probability of exceeding $10M annual loss from X% to Y%."
+Example, faster run:
+
+```bash
+Rscript cyber_incident_cmdstanr.R --samples 1500 --chains 4 --tune 750 --no-plot
+```
+
+### 2) `build_mitigation_influence_template.R` flags
+
+| Flag | Default | Meaning |
+|---|---:|---|
+| `-d`, `--dataset` | `enterprise-attack.json` | Path to ATT&CK Enterprise JSON bundle |
+| `-o`, `--output-dir` | auto | Override output directory |
+| `-q`, `--quiet` | off | Suppress console messages |
+
+Example:
+
+```bash
+Rscript build_mitigation_influence_template.R --dataset enterprise-attack.json --output-dir ./output_inputs
+```
+
+### 3) `build_technique_relevance_template.R` flags
+
+This script supports multiple ways to auto mark techniques as relevant.
+
+| Flag | Default | Meaning |
+|---|---:|---|
+| `-e`, `--enterprise-json` | auto detect | Path to ATT&CK Enterprise JSON bundle |
+| `-m`, `--mark-all` | `none` | Mark all techniques relevant: `all` or `none` |
+| `-p`, `--procedure` | none | Procedure name or ID for Group, Malware, or Tool. May repeat |
+| `-c`, `--campaign` | none | Campaign ID like `C0017`. May repeat |
+| `-d`, `--dedupe-names` | off | Dedupe identical technique names |
+| `-s`, `--sort-techniques` | on | Sort techniques alphabetically |
+| `-o`, `--output-dir` | auto | Override output directory |
+| `-q`, `--quiet` | off | Suppress console messages |
+
+#### About `--procedure`
+
+Yes, you can generate a relevance CSV based on a procedure reference from the ATT&CK JSON.
+
+In this script, `--procedure` is implemented as:
+
+- Find STIX objects by name or external ID across these types: `intrusion-set`, `malware`, `tool`
+- Follow relationships that indicate those sources use techniques
+- Auto mark the linked techniques as relevant in `technique_relevance.csv`
+- Write `technique_relevance_evidence.json` describing what was auto marked
+
+This aligns with working with ATT&CK STIX relationships in the Enterprise bundle. MITRE documents how ATT&CK content is represented in STIX and provides usage guidance in the `attack-stix-data` repository. citeturn0search7
+
+Example:
+
+```bash
+Rscript build_technique_relevance_template.R   --procedure "APT29"   --procedure "Mimikatz"   --campaign C0017   --output-dir ./output_inputs
+```
+
+### 4) `mitre_control_strength_dashboard.R` flags
+
+| Flag | Default | Meaning |
+|---|---:|---|
+| `-d`, `--dataset` | `enterprise-attack.json` | Path to ATT&CK Enterprise JSON bundle |
+| `-s`, `--strengths` | `mitigation_control_strengths.csv` | Path to mitigation strengths CSV |
+| `-r`, `--use-relevance` | off | Enable relevance filtering |
+| `-f`, `--relevance-file` | `technique_relevance.csv` | Relevance CSV path |
+| `-n`, `--no-figure` | off | Skip dashboard figure generation |
+| `-x`, `--show-figure` | off | Open dashboard HTML after generation |
+| `-o`, `--output-dir` | auto | Override output directory |
+| `-q`, `--quiet` | off | Suppress console messages |
+
+Example:
+
+```bash
+Rscript mitre_control_strength_dashboard.R --use-relevance --show-figure
+```
 
 ---
 
-## 12. Limitations and Use Guidance
+## Notes on customization
 
-- Results depend on assumptions
-- Best used for **scenario comparison**
-- Do not over-interpret single point estimates
-
-This model is designed to support **structured reasoning under uncertainty**, not prediction certainty.
+- If you want to scope the model to a specific actor or threat context, start with `build_technique_relevance_template.R --procedure ...` and optionally apply `--campaign ...`.
+- If you change relevance or influence weights, use the dashboard script to validate the tactic rollups before running the model.
+- For repeatable experiments, always set `--seed` and write outputs to a scenario specific `--output-dir`.
 
 ---
 
-## 13. License and Disclaimer
+## License and disclaimer
 
-This project is provided for research and decision-support purposes. It is not a guarantee of security outcomes.
-
+This project is intended for research and decision support. It does not guarantee security outcomes.

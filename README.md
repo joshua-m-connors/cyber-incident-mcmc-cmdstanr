@@ -93,6 +93,8 @@ The model can optionally be conditioned on **observed breach counts**.
 
 If no observed data is provided, the model runs fully prior-driven.
 
+---
+
 ## Core scripts
 
 1. `cyber_incident_cmdstanr.R`  
@@ -107,7 +109,6 @@ If no observed data is provided, the model runs fully prior-driven.
 4. `mitre_control_strength_dashboard.R`  
    Produces a diagnostic dashboard to validate how your control strength, influence weights, and relevance weights roll up from techniques to tactics.
 
----
 
 ## Repository Structure
 

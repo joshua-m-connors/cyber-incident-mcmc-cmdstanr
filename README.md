@@ -1,213 +1,232 @@
+# FAIR–MITRE ATT&CK Quantitative Risk Model (R / cmdstanr)
 
-# FAIR–MITRE ATT&CK Quantitative Risk Model (R / CmdStanR Version)
+This repository implements a **FAIR-aligned, MITRE ATT&CK–informed quantitative cyber risk model** using Bayesian inference and Monte Carlo simulation. The primary goal is to estimate **annualized loss distributions** while preserving uncertainty, attacker behavior, and control effectiveness in a way that supports **decision-making and scenario comparison**, not point prediction.
 
-This repository provides an R-based implementation of the FAIR–MITRE ATT&CK quantitative cyber‑risk model. It integrates MITRE ATT&CK defensive coverage, stochastic attacker progression, Bayesian inference, and FAIR financial loss modeling into a single reproducible workflow using **R**, **CmdStanR**, and **Monte Carlo simulation**.
-
-This is a R implementation of the model in this repository: https://github.com/joshua-m-connors/cyber-incident-mcmc-pymc
-
----
-
-## 1. Overview
-
-This model performs the following functions:
-
-1. **Loads MITRE ATT&CK technique and mitigation data**
-2. **Builds technique relevance templates** for specific threat actors or campaigns  
-3. **Aggregates mitigation control strengths** into tactic-level defensive ranges  
-4. **Builds a stochastic cyber‑attacker simulation** over the selected ATT&CK tactics  
-5. **Applies FAIR‑aligned loss modeling** using lognormal bodies and heavy-tailed legal/reputation components  
-6. **Generates full annualized loss exposure (AAL) distributions**, loss exceedance curves, and summary CSV outputs
-
-This R version mirrors the logic of the Python/PyMC implementation but uses:
-- **CmdStanR** for Bayesian inference  
-- **data.table / tidyverse** for manipulation  
-- **ggplot2** for diagnostics  
-- **Monte Carlo simulation** implemented natively in R
+The core execution path is implemented in **R using cmdstanr**, with supporting scripts for building control strength inputs, technique relevance mappings, and dashboards.
 
 ---
 
-## 2. Repository Structure
+## 1. Conceptual Overview
+
+### What this model does
+
+At a high level, the model:
+
+1. Represents **attack attempts per year** as an uncertain frequency distribution
+2. Simulates attacker progression through a **MITRE ATT&CK tactic chain**
+3. Applies **control strength and threat capability** to determine stage success
+4. Models **detection and retry behavior** explicitly
+5. Simulates **financial loss** for successful incidents using bounded severity distributions
+6. Produces **annualized loss distributions (AAL, percentiles, exceedance curves)**
+
+All outputs are **distributions**, not single values.
+
+### What this model is not
+
+- It is **not** a deterministic forecast
+- It is **not** a risk scoring system
+- It does **not** assume repeated attempts guarantee success
+
+---
+
+## 2. Core Modeling Principles
+
+### FAIR alignment
+
+The model follows FAIR principles:
+
+- Frequency and magnitude are modeled separately
+- Loss is expressed in **financial terms**
+- Uncertainty is preserved throughout the analysis
+
+### MITRE ATT&CK integration
+
+MITRE ATT&CK provides:
+
+- The **attack progression structure** (tactics)
+- Technique-level mappings for controls and relevance
+
+Controls are mapped to techniques, then aggregated to tactic-level effectiveness ranges.
+
+---
+
+## 3. Detection and Adaptability (Important)
+
+The R implementation uses **strict, bounded logic**:
+
+- **Adaptability does NOT increase success probability**
+- Adaptability **only governs persistence** (whether retries are allowed after failure)
+- Retries are capped by `MAX_RETRIES_PER_STAGE`
+- **Detection probability increases with repeated attempts**
+
+This prevents the common modeling error where retries converge to certainty.
+
+---
+
+## 4. Bayesian Structure
+
+### Why Bayesian inference
+
+Cyber risk is under-observed. We rarely have complete, clean data.
+
+Bayesian inference allows us to:
+
+- Encode uncertainty as distributions
+- Combine priors with limited evidence
+- Produce posterior distributions that support comparison
+
+### Posterior interpretation
+
+Each posterior draw represents **one internally consistent version of reality**, including:
+
+- Annual attempt rate
+n- Per-tactic success probabilities
+- Loss severity behavior
+
+Posterior predictive simulation explores a **space of plausible outcomes**, not a single future.
+
+---
+
+## 5. Observed Data Conditioning (Optional)
+
+The model can optionally be conditioned on **observed breach counts**.
+
+- Conditioning applies **only to frequency**
+- Implemented as a Poisson likelihood on observed incidents over observed years
+- Per-tactic success probabilities remain uncertain unless stage-level data exists
+
+If no observed data is provided, the model runs fully prior-driven.
+
+---
+
+## 6. Repository Structure
 
 ```
 .
-├── build_technique_relevance_template.R
+├── cyber_incident_cmdstanr.R        # Main model runner (cmdstanr)
 ├── build_mitigation_influence_template.R
+├── build_technique_relevance_template.R
+├── mitigation_control_strengths.csv
+├── technique_relevance.csv
 ├── mitre_control_strength_dashboard.R
-├── cyber_incident_cmdstanr.R
-├── data/
-│   └── enterprise-attack.json       (MITRE ATT&CK bundle; user provides)
-├── output_YYYY-MM-DD/               (auto-generated outputs)
-└── README_R.md                      (this file)
+├── README.md
 ```
 
 ---
 
-## 3. Requirements
+## 7. Prerequisites
 
-### System Requirements
+### System requirements
+
 - R >= 4.2
-- CmdStan installed (see Installation section)
-- 8 GB RAM recommended for full-scale Bayesian runs
+- CmdStan >= 2.33
 
-### R Packages
-Install required dependencies:
+### R packages
 
 ```r
-install.packages(c("data.table", "jsonlite", "dplyr", "ggplot2", 
-                   "readr", "stringr", "cmdstanr", "tidyr"))
-cmdstanr::check_cmdstan_toolchain()
+install.packages(c(
+  "cmdstanr",
+  "posterior",
+  "ggplot2",
+  "dplyr",
+  "tidyr",
+  "optparse",
+  "jsonlite"
+))
+```
+
+Install CmdStan (once):
+
+```r
 cmdstanr::install_cmdstan()
 ```
 
 ---
 
-## 4. Workflow
+## 8. Input Files
 
-### Step 1: Provide ATT&CK Dataset
+### `mitigation_control_strengths.csv`
 
-Download MITRE ATT&CK Enterprise JSON:
+Defines **min/max control effectiveness** per mitigation.
+
+- Values are on [0, 1]
+- Higher means stronger controls
+
+### `technique_relevance.csv`
+
+Weights how relevant each technique is for the modeled threat context.
+
+Used to roll technique controls up to tactics.
+
+---
+
+## 9. Running the Model
+
+Basic run:
 
 ```bash
-wget https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json
+Rscript cyber_incident_cmdstanr.R \
+  --dataset enterprise-attack.json \
+  --strengths mitigation_control_strengths.csv \
+  --technique-relevance technique_relevance.csv
 ```
 
-Place it in the `/data` directory or the working directory.
+With observed data conditioning:
+
+```bash
+Rscript cyber_incident_cmdstanr.R \
+  --observed-incidents 2 \
+  --observed-years 5
+```
+
+Key CLI options:
+
+- `--samples` Number of posterior samples
+- `--chains` Number of MCMC chains
+- `--seed` Random seed
+- `--summary-only` Skip plots
 
 ---
 
-### Step 2: Build Technique Relevance Template
+## 10. Outputs
 
-```r
-source("build_technique_relevance_template.R")
+The model produces:
 
-build_technique_relevance(
-  enterprise_json = "enterprise-attack.json",
-  procedure = c("APT29"),      # optional
-  campaign  = c("C0017")       # optional
-)
-```
+- Annualized loss distributions
+- Mean and median AAL
+- Percentiles and credible intervals
+- Probability of zero-loss years
+- Exceedance curves
 
-Output:
-
-```
-output_YYYY-MM-DD/technique_relevance.csv
-output_YYYY-MM-DD/technique_relevance_evidence.json
-```
-
-You may manually adjust the “Relevant” column to tune scope.
+Outputs are written to a timestamped directory.
 
 ---
 
-### Step 3: Build Mitigation Influence Template
+## 11. Interpreting Results
 
-```r
-source("build_mitigation_influence_template.R")
-build_mitigation_influence("enterprise-attack.json")
-```
+Focus on:
 
-This produces:
+- **Comparison**, not precision
+- Changes in percentiles and exceedance probabilities
+- Directional sensitivity to control improvements
 
-```
-mitigation_influence_template.csv
-output_YYYY-MM-DD/mitigation_template_build_log.txt
-```
+The most defensible statements are comparative:
+
+> "Improving detection reduces the probability of exceeding $10M annual loss from X% to Y%."
 
 ---
 
-### Step 4: Generate Tactic‑Level Control Strength Dashboard
+## 12. Limitations and Use Guidance
 
-```r
-source("mitre_control_strength_dashboard.R")
+- Results depend on assumptions
+- Best used for **scenario comparison**
+- Do not over-interpret single point estimates
 
-dashboard <- build_mitre_dashboard(
-  dataset = "enterprise-attack.json",
-  mitigation_csv = "mitigation_influence_template.csv",
-  relevance_csv = "output_YYYY-MM-DD/technique_relevance.csv"
-)
-```
-
-Outputs:
-
-- HTML dashboard of control strengths  
-- tactic_control_strengths.csv  
-- filtered_summary.csv  
+This model is designed to support **structured reasoning under uncertainty**, not prediction certainty.
 
 ---
 
-### Step 5: Run the FAIR–MITRE Risk Model (R / CmdStanR)
+## 13. License and Disclaimer
 
-```r
-source("cyber_incident_cmdstanr.R")
-
-results <- run_fair_mitre_model(
-  dataset = "enterprise-attack.json",
-  mitigation_csv = "mitigation_influence_template.csv",
-  relevance_csv = "output_YYYY-MM-DD/technique_relevance.csv",
-  samples = 2000
-)
-```
-
-Outputs:
-
-```
-output_YYYY-MM-DD/cyber_risk_simulation_results_*.csv
-output_YYYY-MM-DD/cyber_risk_simulation_summary_*.csv
-output_YYYY-MM-DD/exceedance_curve_*.png
-output_YYYY-MM-DD/dashboard_2x2_*.png
-```
-
----
-
-## 5. Outputs
-
-| File | Description |
-|------|-------------|
-| technique_relevance.csv | Checklist of ATT&CK techniques for the selected actor |
-| mitigation_influence_template.csv | Default control ranges and mitigation weights |
-| tactic_control_strengths.csv | Tactic‑level defensive strength inputs |
-| cyber_risk_simulation_results.csv | Per‑draw losses, λ, and success outcomes |
-| cyber_risk_simulation_summary.csv | Mean AAL, credible intervals, loss per incident |
-| dashboard_2x2.png | Posterior visualizations |
-| loss_exceedance_curve.png | LEC for annual losses |
-
----
-
-## 6. Model Components
-
-### Bayesian Frequency Model
-Lognormal prior calibrated to a 90 percent confidence range for attack attempts per year.
-
-### Stage‑wise Attacker Simulation
-- Retry logic  
-- Detection and fallback  
-- Threat capability  
-- Optional adaptability  
-- Only runs stages marked as relevant in the ATT&CK subset  
-
-### FAIR Loss Modeling
-Each successful attack draws category losses from:
-- Lognormal body (P5 to P95 calibrated)  
-- Bounded Pareto tail for heavy‑loss categories  
-- Output is aggregated per draw to produce annual loss distributions  
-
----
-
-## 7. Example Script Invocation
-
-```r
-Rscript cyber_incident_cmdstanr.R   --dataset enterprise-attack.json   --strengths mitigation_influence_template.csv   --relevance output_2025-01-15/technique_relevance.csv   --samples 3000   --no_plot
-```
-
----
-
-## 8. License
-
-FAIR–MITRE ATT&CK Quantitative Cyber Risk Framework
-
-Copyright 2025 Joshua M. Connors
-
-Licensed under the Apache License, Version 2.0.
-
-This software incorporates public data from the MITRE ATT&CK® framework.
-
+This project is provided for research and decision-support purposes. It is not a guarantee of security outcomes.
 

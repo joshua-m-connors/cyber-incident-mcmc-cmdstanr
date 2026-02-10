@@ -55,7 +55,7 @@ Controls are mapped to techniques, then aggregated to tactic-level effectiveness
 The R implementation uses **strict, bounded logic**:
 
 - **Adaptability does NOT increase success probability**
-- Adaptability **only governs persistence** (whether retries are allowed after failure)
+- Adaptability **governs persistence** (whether retries are allowed after failure)
 - Retries are capped by `MAX_RETRIES_PER_STAGE`
 - **Detection probability increases with repeated attempts**
 

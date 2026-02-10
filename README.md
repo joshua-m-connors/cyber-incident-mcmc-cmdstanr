@@ -141,6 +141,13 @@ Install CmdStan (once):
 cmdstanr::install_cmdstan()
 ```
 
+### Provide MITRE ATT&CK Dataset
+
+Download MITRE ATT&CK Enterprise JSON:
+
+```bash
+wget https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json
+```
 ---
 
 ## 8. Input Files
